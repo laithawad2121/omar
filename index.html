@@ -178,7 +178,7 @@
       border-radius:50%;
       background:var(--green);
       box-shadow:0 0 0 0 rgba(34,197,94,.6);
-      animation:none;
+      animation:pulse 1.45s infinite;
     }
 
     h1 {
@@ -423,7 +423,7 @@
       border-radius:50%;
       background:#ff3158;
       box-shadow:0 0 12px rgba(255,49,88,.8);
-      animation:none;
+      animation:blink 1s infinite;
     }
 
     .upload-panel {
@@ -630,7 +630,7 @@
       inset:0;
       background:repeating-linear-gradient(-12deg, rgba(255,255,255,.10) 0 1px, transparent 1px 12px);
       mix-blend-mode:overlay;
-      animation:none;
+      animation:drift 10s linear infinite;
     }
 
     .gallery-overlay {
@@ -877,11 +877,15 @@
       font-size:14px;
     }
 
-    .reveal,
+    .reveal {
+      opacity:1 !important;
+      transform:none !important;
+      transition:opacity .72s ease, transform .72s ease;
+    }
+
     .reveal.visible {
       opacity:1 !important;
       transform:none !important;
-      transition:none !important;
     }
 
 
@@ -944,49 +948,6 @@
     .result,
     .cta {
       visibility: visible !important;
-    }
-
-
-    /* Reliable printer motion: CSS driven, no dependency on JS measurements */
-    .print-target {
-      animation: revealPrint 5.8s linear infinite !important;
-    }
-
-    .printer,
-    .printer-shadow {
-      animation: printerDrive 5.8s linear infinite !important;
-    }
-
-    .scan-line {
-      animation: scanDrive 5.8s linear infinite !important;
-    }
-
-    .spray {
-      animation: sprayDrive 5.8s linear infinite !important;
-    }
-
-    @keyframes revealPrint {
-      0%, 10% { clip-path: inset(0 100% 0 0); }
-      88%, 100% { clip-path: inset(0 0 0 0); }
-    }
-
-    @keyframes printerDrive {
-      0%, 10% { transform: translateX(12vw); }
-      88%, 100% { transform: translateX(48vw); }
-    }
-
-    @keyframes scanDrive {
-      0%, 10% { opacity: 0; transform: translateX(0); }
-      13% { opacity: 1; }
-      88% { opacity: 1; transform: translateX(36vw); }
-      100% { opacity: 0; transform: translateX(36vw); }
-    }
-
-    @keyframes sprayDrive {
-      0%, 10% { opacity: 0; left: 6%; }
-      13% { opacity: .85; }
-      88% { opacity: .85; left: 64%; }
-      100% { opacity: 0; left: 64%; }
     }
 
     @keyframes pulse {
@@ -1439,30 +1400,14 @@
       const value = printText.textContent.trim() || "Main WallPrint";
       printText.textContent = value;
       printText.style.lineHeight = "1";
-      printText.style.letterSpacing = ".012em";
-
       const targetRect = target.getBoundingClientRect();
-      const maxWidth = targetRect.width * 0.90;
-      const maxHeight = targetRect.height * 0.88;
-
-      let size = Math.min(targetRect.height * 0.72, 118);
+      let size = Math.min(targetRect.height * 0.78, 132);
       printText.style.fontSize = size + "px";
-
       let safety = 0;
-      while ((printText.scrollWidth > maxWidth || printText.scrollHeight > maxHeight) && size > 12 && safety < 120) {
-        size -= 1;
+      while ((printText.scrollWidth > targetRect.width * 0.96 || printText.scrollHeight > targetRect.height * 0.94) && size > 24 && safety < 80) {
+        size -= 2;
         printText.style.fontSize = size + "px";
         safety++;
-      }
-
-      if (printText.scrollWidth > maxWidth) {
-        printText.style.letterSpacing = "0";
-        safety = 0;
-        while (printText.scrollWidth > maxWidth && size > 10 && safety < 80) {
-          size -= 1;
-          printText.style.fontSize = size + "px";
-          safety++;
-        }
       }
     }
 
@@ -1564,23 +1509,43 @@
     }
 
     function apply(progress) {
-      // Printer movement is handled by CSS keyframes for maximum reliability.
-      // This function is kept only so Replay can restart the CSS animations.
+      const p = easeInOut(progress);
+      const x = layout.startX + (layout.endX - layout.startX) * p;
+      const wobble = Math.sin(progress * Math.PI * 18) * 1.1;
+
+      printer.style.transform = `translate(${x}px, ${wobble}px)`;
+      printerShadow.style.transform = `translateX(${x - scene.clientWidth * .035}px)`;
+
+      target.style.clipPath = `inset(0 ${Math.max(0, 100 - p * 100)}% 0 0)`;
+
+      const localX = layout.targetLeft + layout.targetWidth * p;
+
+      scanLine.style.top = `${layout.lineTop}px`;
+      scanLine.style.height = `${layout.lineHeight}px`;
+      scanLine.style.opacity = progress > .02 && progress < .985 ? 1 : 0;
+      scanLine.style.transform = `translateX(${localX - layout.targetLeft}px)`;
+
+      spray.style.opacity = progress > .03 && progress < .98 ? .9 : 0;
+      spray.style.left = `${localX - 24}px`;
+      spray.style.top = `${layout.lineTop + layout.lineHeight * .38}px`;
     }
 
     function run(startTime) {
-      restartAnimation();
+      const frame = now => {
+        let progress = (now - startTime) / duration;
+        if (progress > 1) progress = 1;
+        apply(progress);
+        if (progress < 1) animId = requestAnimationFrame(frame);
+      };
+      animId = requestAnimationFrame(frame);
     }
 
     function restartAnimation() {
+      cancelAnimationFrame(animId);
       if (!target.classList.contains("image-mode")) fitPrintText();
-
-      const animatedEls = [target, printer, printerShadow, scanLine, spray];
-      animatedEls.forEach(el => {
-        el.style.animation = "none";
-        void el.offsetWidth;
-        el.style.animation = "";
-      });
+      layout = measure();
+      apply(0);
+      run(performance.now());
     }
 
     function useText() {
@@ -1689,26 +1654,21 @@
       el.addEventListener("change", calculateCost);
     });
 
-    document.querySelectorAll(".reveal").forEach(el => el.classList.add("visible"));
+    const reveals = document.querySelectorAll(".reveal");
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) entry.target.classList.add("visible");
+      });
+    }, { threshold: .14 });
+    reveals.forEach(el => observer.observe(el));
 
     document.getElementById("year").textContent = new Date().getfull colorYear();
 
-    function bootSite() {
-      document.querySelectorAll(".reveal").forEach(el => el.classList.add("visible"));
-      calculateCost();
-      fitPrintText();
-      setTimeout(restartAnimation, 150);
-    }
-
     window.addEventListener("resize", restartAnimation);
-    window.addEventListener("DOMContentLoaded", bootSite);
-    window.addEventListener("load", bootSite);
-
-    const printerImage = printer.querySelector("img");
-    if (printerImage) {
-      if (printerImage.complete) setTimeout(restartAnimation, 200);
-      printerImage.addEventListener("load", () => setTimeout(restartAnimation, 100));
-    }
+    window.addEventListener("load", () => {
+      setTimeout(restartAnimation, 250);
+      calculateCost();
+    });
   </script>
 </body>
 </html>
